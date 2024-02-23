@@ -1,0 +1,21 @@
+---
+- name: Setup test-server.deuralijanta.com
+  hosts: test-server.deuralijanta.com
+  remote_user: root
+  vars_files:
+    - vars.yml
+
+  pre_tasks:
+    - name: Set correct TERM variable
+      ansible.builtin.lineinfile:
+        path: .bashrc
+        line: "export TERM=xterm-256color"
+        create: yes
+        state: present
+
+    - name: Install acl package needed by Ansible
+      ansible.builtin.apt:
+        name: acl
+        state: present
+  roles:
+    - zabbix

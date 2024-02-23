@@ -1,0 +1,94 @@
+---
+- name: Download Zabbix repository package
+  ansible.builtin.get_url:
+    url: "https://repo.zabbix.com/zabbix/6.4/ubuntu/pool/main/z/zabbix-release/zabbix-release_6.4-1+ubuntu22.04_all.deb"
+    dest: /tmp/zabbix-release_6.4-1+ubuntu22.04_all.deb
+
+- name: Install Zabbix repository package
+  ansible.builtin.apt:
+    deb: /tmp/zabbix-release_6.4-1+ubuntu22.04_all.deb
+
+- name: Install Zabbix Server and Required Packages
+  ansible.builtin.apt:
+    name:
+      - zabbix-server-pgsql
+      - zabbix-frontend-php
+      - php8.1-pgsql
+      - zabbix-nginx-conf
+      - zabbix-sql-scripts
+      - zabbix-agent
+      - postgresql
+      - python3-pip
+    state: latest
+
+- name: "Install Python packages required by postgres"
+  ansible.builtin.pip:
+    name:
+      - psycopg2-binary
+    state: latest
+
+- name: Create database user
+  become: true
+  become_user: postgres
+  community.postgresql.postgresql_user:
+    state: present
+    name: "{{ db_user }}"
+    password: "{{ db_password }}"
+
+- name: Create initial database
+  become: true
+  become_user: postgres
+  postgresql_db:
+    state: present
+    name: "{{ db_name }}"
+
+- name: "Find out if PostgreSQL is initialized"
+  ansible.builtin.stat:
+    path: "/var/lib/pgsql/data/pg_hba.conf"
+  register: postgres_data
+
+- name: Uncompress Zabbix SQL file
+  ansible.builtin.shell:
+    cmd: "zcat /usr/share/zabbix-sql-scripts/postgresql/server.sql.gz > /tmp/server.sql"
+    creates: "/tmp/server.sql"
+  when: not postgres_data.stat.exists
+
+- name: "Execute script from Zabbix SQL file"
+  become: true
+  become_user: zabbix
+  ansible.builtin.command: "psql {{ db_name }} -f /tmp/server.sql"
+  when: not postgres_data.stat.exists
+
+- name: Ensure zabbix_server.conf exists
+  ansible.builtin.file:
+    path: /etc/zabbix/zabbix_server.conf
+    state: touch
+
+- name: Add or update "DBPassword" in zabbix_server.conf
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/zabbix_server.conf
+    regexp: '^DBPassword='
+    line: "DBPassword={{ db_password }}"
+
+- name: Edit Zabbix nginx.conf file
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/nginx.conf
+    regexp: '\s*listen'
+    line: '        listen 80;'
+
+- name: Edit Zabbix nginx.conf file
+  ansible.builtin.lineinfile:
+    path: /etc/zabbix/nginx.conf
+    regexp: '\s*server_name'
+    line: '        server_name test-server.deuralijanta.com;'
+
+- name: Restart and enable services
+  ansible.builtin.service:
+    name: "{{ item }}"
+    state: restarted
+    enabled: true
+  loop:
+    - zabbix-server
+    - zabbix-agent
+    - nginx
+    - php8.1-fpm
